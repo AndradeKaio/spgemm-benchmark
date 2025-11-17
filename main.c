@@ -1,8 +1,26 @@
-#include "taco_kernel.h"
-// #include "taco_kernel_opt.h"
+//#include "taco_kernel.h"
+#include "taco_kernel_opt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
+
+// // returns a malloc'ed string: "<input>_result.tns"
+char* make_result_filename(const char* inputB) {
+    size_t len = strlen(inputB);
+    const char* suffix = "_result.tns";
+
+    // remove extension if .tns is present
+    const char* dot = strrchr(inputB, '.');
+    size_t base_len = (dot && strcmp(dot, ".tns") == 0)
+                      ? (size_t)(dot - inputB)
+                      : len;
+
+    char* out = malloc(base_len + strlen(suffix) + 1);
+    memcpy(out, inputB, base_len);
+    strcpy(out + base_len, suffix);
+    return out;
+}
 
 double now_ms() {
   struct timespec ts;
@@ -361,10 +379,10 @@ int main_load(int argc, char **argv) {
   int Cmax_i, Cmax_j;
 
   // Load the two matrices
-  printf("Loading %s...\n", Bfile);
+  //printf("Loading %s...\n", Bfile);
   load_tns(Bfile, &Brow, &Bcol, &Bval, &Bnnz, &Bmax_i, &Bmax_j);
 
-  printf("Loading %s...\n", Cfile);
+  //printf("Loading %s...\n", Cfile);
   load_tns(Cfile, &Crow, &Ccol, &Cval, &Cnnz, &Cmax_i, &Cmax_j);
 
   // Determine N from largest index
@@ -376,9 +394,9 @@ int main_load(int argc, char **argv) {
   if (Cmax_j > N)
     N = Cmax_j;
 
-  printf("Matrix size inferred: %dx%d\n", N, N);
-  printf("B nnz = %d\n", Bnnz);
-  printf("C nnz = %d\n", Cnnz);
+  //printf("Matrix size inferred: %dx%d\n", N, N);
+  //printf("B nnz = %d\n", Bnnz);
+  //printf("C nnz = %d\n", Cnnz);
 
   int dims[2] = {N, N};
   int order[2] = {0, 1};
