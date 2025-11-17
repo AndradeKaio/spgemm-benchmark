@@ -1,7 +1,29 @@
 #include "taco_kernel.h"
+// #include "taco_kernel_opt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
+double now_ms() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+char *make_result_filename(const char *inputB) {
+  size_t len = strlen(inputB);
+  const char *suffix = "_result.tns";
+
+  // remove extension if .tns is present
+  const char *dot = strrchr(inputB, '.');
+  size_t base_len =
+      (dot && strcmp(dot, ".tns") == 0) ? (size_t)(dot - inputB) : len;
+
+  char *out = malloc(base_len + strlen(suffix) + 1);
+  memcpy(out, inputB, base_len);
+  strcpy(out + base_len, suffix);
+  return out;
+}
 
 // Save a 2-D CSR taco_tensor_t to a .tns file (1-based indices).
 // Assumes A is in CSR format (sparse,sparse) exactly like TACO SpGEMM output.
@@ -384,24 +406,18 @@ int main_load(int argc, char **argv) {
 
   pack_into_taco(B, Brow, Bcol, Bval, Bnnz, 1);
   pack_into_taco(C, Crow, Ccol, Cval, Cnnz, 0);
-  // pack_B(B, Bpos_arr, Brow, Bcol, Bval);
-  // pack_C(C, Cpos_arr, Crow, Ccol, Cval);
 
-  clock_t t0 = clock();
+  double t0 = now_ms();
   assemble(A, B, C);
   compute(A, B, C);
-  clock_t t1 = clock();
+  double t1 = now_ms();
 
-  double time_taken = ((double)(t1 - t0)) / CLOCKS_PER_SEC;
-
-  int *Apos = (int *)A->indices[1][0];
-  int Annz = Apos[N];
-
-  save_tns(A, "A_output.tns");
-  save_tns(B, "B.tns");
-  printf("%d,%d,%.6f", N, N, time_taken);
+  char *outname = make_result_filename(Bfile);
+  save_tns(A, outname);
+  printf("%d,%d,%.6f", N, N, (t1 - t0));
   return 0;
 }
+
 int main(int argc, char **argv) {
   // main_random(argc, argv);
   main_load(argc, argv);
