@@ -5,22 +5,6 @@
 #include <time.h>
 #include <string.h>
 
-// // returns a malloc'ed string: "<input>_result.tns"
-char* make_result_filename(const char* inputB) {
-    size_t len = strlen(inputB);
-    const char* suffix = "_result.tns";
-
-    // remove extension if .tns is present
-    const char* dot = strrchr(inputB, '.');
-    size_t base_len = (dot && strcmp(dot, ".tns") == 0)
-                      ? (size_t)(dot - inputB)
-                      : len;
-
-    char* out = malloc(base_len + strlen(suffix) + 1);
-    memcpy(out, inputB, base_len);
-    strcpy(out + base_len, suffix);
-    return out;
-}
 
 double now_ms() {
   struct timespec ts;
@@ -431,7 +415,7 @@ int main_load(int argc, char **argv) {
   double t1 = now_ms();
 
   char *outname = make_result_filename(Bfile);
-  save_tns(A, outname);
+  //save_tns(A, outname);
   printf("%d,%d,%.6f", N, N, (t1 - t0));
   return 0;
 }
