@@ -55,9 +55,7 @@ if __name__ == "__main__":
         start = time.time()
         C = torch.matmul(A, B)
         end = time.time()
-    print(start)
-    print(end)
-    elapsed_time_millis = int((end - start) * 1000)
+    elapsed_time_millis = (end - start) * 1000
     print(f"{M},{K},{elapsed_time_millis},{A_file},{B_file}")
 
 
