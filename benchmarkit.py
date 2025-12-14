@@ -144,16 +144,11 @@ class Benchmarkit:
                 for _ in range(self.reps):
                     logger.info(f"[{self._count}/{self._total}] running config {config}")
                     try:
-                        cmd = [self.command]
-                        cmd.extend(config)
-                        prefix = config[0].split("/")[2]
-                        number = prefix.split("_")[0]
-                        cmd.append(str(number))
-                        process = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+                        process = subprocess.Popen(self.get_command(config), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                         process.wait()
                         result: List[str] = self.parse_output(process.stdout.read())
                         self._decrement(config)
-                        result.extend(config)
                         writer.writerow(result)
                         file.flush()
                     except Exception as e:
@@ -186,8 +181,39 @@ class TACOBenchmark(Benchmarkit):
     def csv_header(self) -> str:
         return "M,K,time"
 
+    def get_command(self, config) -> List:
+        command = [self.command]
+        command.extend(config)
+        return command
+
+class BitmapBenchmark(Benchmarkit):
+    def gen_configs(self) -> Iterator[Tuple[str, ...]]:
+        import os
+        directory = "./dataset/"
+        files_names = os.listdir(directory)
+        for file in files_names:
+            yield (f"{directory}{file}",) * 2
+
+    def parse_output(self, output):
+        return output.split(",")
+
+    def csv_header(self) -> str:
+        return "M,K,time"
+
+    def get_command(self, config) -> List:
+        command = [self.command]
+        lhs = config[0]
+        size = lhs.split("/")[2].split("_")[0]
+        command.extend(config)
+        command.append(size)
+        return command
+        
+
+
+
 
 if __name__ == "__main__":
-    sl = TACOBenchmark(command="./spgemm_bitmap", recover_failure=True, reps=10)
+    sl = BitmapBenchmark(command="./spgemm_bitmap", recover_failure=False, reps=10)
+    #sl = TACOBenchmark(command="./taco_spgemm", recover_failure=False, reps=1)
     sl.run()
 
