@@ -1,10 +1,18 @@
-//#include "taco_kernel.h"
+// #include "taco_kernel.h"
 #include "taco_kernel_opt.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 #include <string.h>
+#include <time.h>
 
+size_t dense_mem_bytes(int N) { return (size_t)N * N * sizeof(double); }
+
+size_t taco_csr_memory(const taco_tensor_t *T, int M, int nnz) {
+  size_t pos_bytes = (size_t)(M + 1) * sizeof(int);
+  size_t idx_bytes = (size_t)nnz * sizeof(int);
+  size_t val_bytes = (size_t)nnz * sizeof(double);
+  return pos_bytes + idx_bytes + val_bytes;
+}
 
 double now_ms() {
   struct timespec ts;
@@ -116,110 +124,47 @@ int load_tns(const char *filename, int **row_out, int **col_out,
   return 1;
 }
 
-void test_small_4x4() {
-  printf("\n===== SANITY TEST 4x4 =====\n");
+double *load_tns_as_dense(const char *filename, int *N_out) {
+  int *row, *col, nnz;
+  double *val;
+  int max_i, max_j;
 
-  int N = 4;
+  load_tns(filename, &row, &col, &val, &nnz, &max_i, &max_j);
 
-  int dims[2] = {N, N};
-  int order[2] = {0, 1};
-  taco_mode_t modes[2] = {taco_mode_sparse, taco_mode_sparse};
+  int N = max_i;
+  if (max_j > N)
+    N = max_j;
 
-  taco_tensor_t *B = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
-  taco_tensor_t *C = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
-  taco_tensor_t *A = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
+  double *dense = (double *)calloc((size_t)N * N, sizeof(double));
 
-  // Minimal allocations
-  B->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
-  B->indices[1][1] = (uint8_t *)malloc(sizeof(int));
-  B->vals = (uint8_t *)malloc(sizeof(double));
-
-  C->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
-  C->indices[1][1] = (uint8_t *)malloc(sizeof(int));
-  C->vals = (uint8_t *)malloc(sizeof(double));
-
-  A->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
-  A->indices[1][1] = (uint8_t *)malloc(sizeof(int));
-  A->vals = (uint8_t *)malloc(sizeof(double));
-
-  // ------------------------------------------------------------
-  // B matrix in COO
-  // ------------------------------------------------------------
-  int Brow[] = {0, 0, 1, 1, 2, 3};
-  int Bcol[] = {0, 1, 1, 2, 3, 0};
-  double Bval[] = {1, 2, 3, 4, 5, 6};
-  int Bnnz = 6;
-
-  // C matrix in COO
-  int Crow[] = {0, 1, 2, 3};
-  int Ccol[] = {0, 1, 2, 0};
-  double Cval[] = {7, 8, 9, 10};
-  int Cnnz = 4;
-
-  // Build COO1_pos: {0, nnz}
-  int Bpos_arr[2] = {0, Bnnz};
-  int Cpos_arr[2] = {0, Cnnz};
-
-  pack_B(B, Bpos_arr, Brow, Bcol, Bval);
-  pack_C(C, Cpos_arr, Crow, Ccol, Cval);
-
-  // ------------------------------------------------------------
-  // Assemble + compute
-  // ------------------------------------------------------------
-  assemble(A, B, C);
-  compute(A, B, C);
-
-  // ------------------------------------------------------------
-  // Print CSR result A
-  // ------------------------------------------------------------
-  int *Apos = (int *)A->indices[1][0];
-  int *Aidx = (int *)A->indices[1][1];
-  double *Aval = (double *)A->vals;
-
-  printf("A (CSR format):\n");
-  for (int i = 0; i < N; i++) {
-    printf("row %d: ", i);
-    for (int p = Apos[i]; p < Apos[i + 1]; p++) {
-      printf("(%d, %.0f) ", Aidx[p], Aval[p]);
-    }
-    printf("\n");
+  for (int k = 0; k < nnz; k++) {
+    dense[row[k] * N + col[k]] = val[k];
   }
 
-  printf("===== END SANITY TEST =====\n\n");
+  free(row);
+  free(col);
+  free(val);
+
+  *N_out = N;
+  return dense;
 }
 
-// Generate random COO matrix (C-style)
-void generate_random_coo(int N, double density, int **row_out, int **col_out,
-                         double **val_out, int *nnz_out) {
-  int capacity = (int)(N * N * density * 1.2) + 16;
-  int *row = (int *)malloc(capacity * sizeof(int));
-  int *col = (int *)malloc(capacity * sizeof(int));
-  double *val = (double *)malloc(capacity * sizeof(double));
-
-  int nnz = 0;
+int save_dense_tns(const char *filename, const double *A, int N) {
+  FILE *f = fopen(filename, "w");
+  if (!f)
+    return 0;
 
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
-      double r = (double)rand() / RAND_MAX;
-      if (r < density) {
-        if (nnz == capacity) { // resize
-          capacity *= 2;
-          row = (int *)realloc(row, capacity * sizeof(int));
-          col = (int *)realloc(col, capacity * sizeof(int));
-          val = (double *)realloc(val, capacity * sizeof(double));
-        }
-        row[nnz] = i;
-        col[nnz] = j;
-        val[nnz] = (double)rand() / RAND_MAX;
-        nnz++;
+      double v = A[i * N + j];
+      if (v != 0.0) {
+        fprintf(f, "%d %d %.17g\n", i + 1, j + 1, v);
       }
     }
   }
 
-  *row_out = row;
-  *col_out = col;
-  *val_out = val;
-  *nnz_out = nnz;
+  fclose(f);
+  return 1;
 }
 
 // Create an empty CSR A (TACO requires minimal memory before assemble())
@@ -270,78 +215,48 @@ void pack_into_taco(taco_tensor_t *T, int *row, int *col, double *val, int nnz,
   free(COO_vals);
 }
 
-int main_random(int argc, char **argv) {
+int main_dense_compare(int argc, char **argv) {
   if (argc < 3) {
-    printf("Usage: ./spgemm N sparsity\n");
+    printf("Usage: ./taco_dd B.tns C.tns\n");
     return 1;
   }
 
-  int N = atoi(argv[1]);
-  double sparsity = atof(argv[2]);
-  double density = 1.0f - sparsity;
+  const char *Bfile = argv[1];
+  const char *Cfile = argv[2];
 
-  srand(42);
+  int N1, N2;
+  double *B_dense = load_tns_as_dense(Bfile, &N1);
+  double *C_dense = load_tns_as_dense(Cfile, &N2);
 
-  // -------------------------------
-  // 1. Generate COO matrices
-  // -------------------------------
-  int *Brow, *Bcol, Bnnz;
-  double *Bval;
+  int N = (N1 > N2) ? N1 : N2;
 
-  int *Crow, *Ccol, Cnnz;
-  double *Cval;
-
-  generate_random_coo(N, density, &Brow, &Bcol, &Bval, &Bnnz);
-  generate_random_coo(N, density, &Crow, &Ccol, &Cval, &Cnnz);
-
-  // printf("B nnz = %d\n", Bnnz);
-  // printf("C nnz = %d\n", Cnnz);
-
-  // -------------------------------
-  // 2. Create TACO tensors
-  // -------------------------------
   int dims[2] = {N, N};
   int order[2] = {0, 1};
-  // taco_mode_t modes[2] = {taco_mode_sparse, taco_mode_sparse};
-  taco_mode_t modes[2] = {taco_mode_dense, taco_mode_sparse};
+  taco_mode_t modes[2] = {taco_mode_dense, taco_mode_dense};
 
   taco_tensor_t *B = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
   taco_tensor_t *C = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
-  taco_tensor_t *A = make_empty_A(N);
+  taco_tensor_t *A = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
 
-  // Minimal allocations for B and C (TACO expects them before pack)
-  B->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
-  B->indices[1][1] = (uint8_t *)malloc(sizeof(int));
-  B->vals = (uint8_t *)malloc(sizeof(double));
+  B->vals = (uint8_t *)B_dense;
+  C->vals = (uint8_t *)C_dense;
+  A->vals = (uint8_t *)calloc((size_t)N * N, sizeof(double));
 
-  C->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
-  C->indices[1][1] = (uint8_t *)malloc(sizeof(int));
-  C->vals = (uint8_t *)malloc(sizeof(double));
-
-  // -------------------------------
-  // 3. Pack CSR B and C
-  // -------------------------------
-  pack_into_taco(B, Brow, Bcol, Bval, Bnnz, 1);
-  pack_into_taco(C, Crow, Ccol, Cval, Cnnz, 0);
-
-  // -------------------------------
-  // 4. Assemble + compute
-  // -------------------------------
-  clock_t t0 = clock();
+  double t0 = now_ms();
   assemble(A, B, C);
   compute(A, B, C);
-  clock_t t1 = clock();
+  double t1 = now_ms();
 
-  double elapsed_ms = 1000.0 * (t1 - t0) / CLOCKS_PER_SEC;
-  double time_taken =
-      ((double)(t1 - t0)) / CLOCKS_PER_SEC; // Calculate in seconds
+  char *outname = make_result_filename(Bfile);
+  save_dense_tns(outname, (double *)A->vals, N);
 
-  int *Apos = (int *)A->indices[1][0];
-  int Annz = Apos[N];
+  size_t mem_dense = 3 * dense_mem_bytes(N); // A,B,C
+  printf("DENSE,%d,%zu,%.6f\n", N, mem_dense, (t1 - t0));
 
-  printf("%d,%d,%.2f,%.2f", N, N, sparsity, time_taken);
-
-  // test_small_4x4();
+  free(outname);
+  free(A->vals);
+  free(B_dense);
+  free(C_dense);
   return 0;
 }
 
@@ -363,10 +278,10 @@ int main_load(int argc, char **argv) {
   int Cmax_i, Cmax_j;
 
   // Load the two matrices
-  //printf("Loading %s...\n", Bfile);
+  // printf("Loading %s...\n", Bfile);
   load_tns(Bfile, &Brow, &Bcol, &Bval, &Bnnz, &Bmax_i, &Bmax_j);
 
-  //printf("Loading %s...\n", Cfile);
+  // printf("Loading %s...\n", Cfile);
   load_tns(Cfile, &Crow, &Ccol, &Cval, &Cnnz, &Cmax_i, &Cmax_j);
 
   // Determine N from largest index
@@ -378,9 +293,9 @@ int main_load(int argc, char **argv) {
   if (Cmax_j > N)
     N = Cmax_j;
 
-  //printf("Matrix size inferred: %dx%d\n", N, N);
-  //printf("B nnz = %d\n", Bnnz);
-  //printf("C nnz = %d\n", Cnnz);
+  // printf("Matrix size inferred: %dx%d\n", N, N);
+  // printf("B nnz = %d\n", Bnnz);
+  // printf("C nnz = %d\n", Cnnz);
 
   int dims[2] = {N, N};
   int order[2] = {0, 1};
@@ -415,13 +330,12 @@ int main_load(int argc, char **argv) {
   double t1 = now_ms();
 
   char *outname = make_result_filename(Bfile);
-  //save_tns(A, outname);
+  // save_tns(A, outname);
   printf("%d,%d,%.6f", N, N, (t1 - t0));
   return 0;
 }
 
 int main(int argc, char **argv) {
-  // main_random(argc, argv);
   main_load(argc, argv);
   return 0;
 }
