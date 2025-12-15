@@ -1,5 +1,6 @@
-// #include "taco_kernel.h"
-#include "taco_kernel_opt.h"
+//#include "taco_kernel.h"
+//#include "taco_kernel_opt.h"
+#include "taco_kernel_dense.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -247,11 +248,17 @@ int main_dense_compare(int argc, char **argv) {
   compute(A, B, C);
   double t1 = now_ms();
 
+  //save output
   char *outname = make_result_filename(Bfile);
-  save_dense_tns(outname, (double *)A->vals, N);
+  //save_dense_tns(outname, (double *)A->vals, N);
 
   size_t mem_dense = 3 * dense_mem_bytes(N); // A,B,C
-  printf("DENSE,%d,%zu,%.6f\n", N, mem_dense, (t1 - t0));
+
+  //memory result
+  printf("%d,%d,%zu,%s", N, N, mem_dense, Bfile);
+ 
+  //runtime result
+  //printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
 
   free(outname);
   free(A->vals);
@@ -331,11 +338,25 @@ int main_load(int argc, char **argv) {
 
   char *outname = make_result_filename(Bfile);
   // save_tns(A, outname);
-  printf("%d,%d,%.6f", N, N, (t1 - t0));
+  // runtime
+  //printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
+
+  // memory
+  size_t B_mem = taco_csr_memory(B, Bmax_i+1, Bnnz);
+  size_t C_mem = taco_csr_memory(C, Cmax_i+1, Cnnz);
+  size_t Annz = ((int*)A->indices[1][0])[N];   // last entry of rowptr
+  size_t A_mem = taco_csr_memory(A, N, Annz);
+  printf("%d,%d,%zu,%s", N, N, (A_mem + B_mem + C_mem), Bfile);
+
+  free(outname);
+  free(A->vals);
+  free(B->vals);
+  free(C->vals);
   return 0;
 }
 
 int main(int argc, char **argv) {
-  main_load(argc, argv);
+  main_dense_compare(argc, argv);
+  //main_load(argc, argv);
   return 0;
 }
