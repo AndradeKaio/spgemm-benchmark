@@ -135,7 +135,7 @@ class Benchmarkit:
         file_flag = self._get_file_flag()
 
         with open(self.output_csv, file_flag, newline='') as file:
-            writer = csv.writer(file)
+            writer = csv.writer(file, lineterminator='\n')
             if file_flag == 'w':
                 writer.writerow(self.csv_header())
 
@@ -179,7 +179,7 @@ class TACOBenchmark(Benchmarkit):
         return output.split(",")
 
     def csv_header(self) -> str:
-        return "M,K,time"
+        return "M,K,time,A,B"
 
     def get_command(self, config) -> List:
         command = [self.command]
@@ -198,7 +198,7 @@ class BitmapBenchmark(Benchmarkit):
         return output.split(",")
 
     def csv_header(self) -> str:
-        return "M,K,time"
+        return ["M", "K", "time", "A", "B"]
 
     def get_command(self, config) -> List:
         command = [self.command]
@@ -209,11 +209,31 @@ class BitmapBenchmark(Benchmarkit):
         return command
         
 
+class AVXBenchmark(Benchmarkit):
+    def gen_configs(self) -> Iterator[Tuple[str, ...]]:
+        import os
+        directory = "./dataset/"
+        files_names = os.listdir(directory)
+        for file in files_names:
+            yield (f"{directory}{file}",) * 2
+
+    def parse_output(self, output):
+        return output.split(",")
+
+    def csv_header(self) -> str:
+        return ["M", "K", "time", "A", "B"]
+
+    def get_command(self, config) -> List:
+        command = [self.command]
+        command.extend(config)
+        return command
+        
 
 
 
 if __name__ == "__main__":
-    sl = BitmapBenchmark(command="./spgemm_bitmap", recover_failure=False, reps=10)
+    #sl = BitmapBenchmark(command="./spgemm_bitmap", recover_failure=False, reps=1)
     #sl = TACOBenchmark(command="./taco_spgemm", recover_failure=False, reps=1)
+    sl = AVXBenchmark(command="./spgemm_avx512", recover_failure=False, reps=10)
     sl.run()
 
