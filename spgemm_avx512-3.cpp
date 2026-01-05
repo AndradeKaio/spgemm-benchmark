@@ -368,7 +368,7 @@ int main(int argc, char **argv) {
     std::cout << Ar << "," << Ar << "," << (t1 - t0) << "," << file_name << ","
               << file_name;
     // memory data
-    size_t C_mem = dense_mem_bytes(C.size());
+    size_t C_mem = dense_mem_bytes(Ar);
     size_t A_mem = get_csc_mem_bytes(A);
     size_t B_mem = get_masked_mem_bytes(Bmask);
 
