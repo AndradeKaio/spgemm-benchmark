@@ -12,13 +12,13 @@
 //   g++ -O3 -std=c++17 -march=skylake-avx512 -fopenmp spgemm_avx512.cpp -o
 //   spgemm
 // --------------------------------------------------
-
 #include <algorithm>
 #include <cassert>
 #include <fstream>
 #include <immintrin.h>
 #include <iostream>
 #include <omp.h>
+#include <sstream>
 #include <string>
 #include <time.h>
 #include <vector>
@@ -112,6 +112,47 @@ size_t get_masked_mem_bytes(const std::vector<BRowMasked> matrix) {
 
 size_t dense_mem_bytes(int N) { return (size_t)N * N * sizeof(val_t); }
 
+std::vector<COO> read_mtx(const std::string &filename, int &nrows, int &ncols) {
+  std::vector<COO> coordinates;
+  std::ifstream file(filename);
+
+  if (!file.is_open()) {
+    std::cerr << "Error: Could not open file " << filename << std::endl;
+    return coordinates;
+  }
+
+  std::string line;
+  int entries = 0;
+  bool isSymmetric = false;
+
+  while (std::getline(file, line)) {
+    if (line.empty() || line[0] == '%')
+      continue;
+
+    std::istringstream iss(line);
+    iss >> nrows >> ncols >> entries;
+    break;
+  }
+
+  if (nrows == 0 || ncols == 0) {
+    std::cerr << "Error: Invalid MTX file format" << std::endl;
+    return coordinates;
+  }
+
+  while (std::getline(file, line)) {
+    if (line.empty() || line[0] == '%')
+      continue;
+
+    std::istringstream iss(line);
+    int row, col;
+    val_t value;
+    iss >> row >> col >> value;
+
+    coordinates.push_back({row - 1, col - 1, value});
+  }
+
+  return coordinates;
+}
 // ------------------------
 // TNS loader (1-based)
 // ------------------------
@@ -440,8 +481,12 @@ int main(int argc, char **argv) {
 
   int Ar, Ac, Br, Bc;
   std::string file_name = argv[1];
-  auto Acoo = load_tns(argv[1], Ar, Ac);
-  auto Bcoo = load_tns(argv[2], Br, Bc);
+  /*auto Acoo = load_tns(argv[1], Ar, Ac);*/
+  /*auto Bcoo = load_tns(argv[2], Br, Bc);*/
+  auto Acoo = read_mtx(argv[1], Ar, Ac);
+  auto Bcoo = Acoo;
+  Br = Ar;
+  Bc = Ac;
   assert(Ac == Br);
 
   CSC A = coo_to_csc(Ar, Ac, Acoo);
