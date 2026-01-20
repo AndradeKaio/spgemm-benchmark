@@ -41,6 +41,13 @@ struct CSC {
   std::vector<val_t> vals;
 };
 
+struct CSR {
+  int nrows, ncols;
+  std::vector<int> row_ptr;
+  std::vector<int> col_idx;
+  std::vector<val_t> vals;
+};
+
 struct BChunk {
   int j;          // starting column (multiple of W)
   __mmask16 mask; // active lanes
@@ -51,6 +58,32 @@ struct BRowChunked {
   std::vector<val_t> vals;    // packed nonzeros
   std::vector<BChunk> chunks; // only non-empty chunks
 };
+
+CSR coo_to_csr(int nrows, int ncols, const std::vector<COO> &coo) {
+  CSR A{nrows, ncols};
+
+  A.row_ptr.assign(nrows + 1, 0);
+
+  for (const auto &e : coo)
+    A.row_ptr[e.i + 1]++;
+
+  for (int r = 0; r < nrows; ++r)
+    A.row_ptr[r + 1] += A.row_ptr[r];
+
+  int nnz = coo.size();
+  A.col_idx.resize(nnz);
+  A.vals.resize(nnz);
+
+  std::vector<int> next = A.row_ptr;
+
+  for (const auto &e : coo) {
+    int p = next[e.i]++;
+    A.col_idx[p] = e.j;
+    A.vals[p] = e.v;
+  }
+
+  return A;
+}
 
 CSC coo_to_csc(int nrows, int ncols, const std::vector<COO> &coo) {
   CSC A{nrows, ncols};
@@ -273,6 +306,74 @@ build_B_rows_chunked_from_coo(const std::vector<COO> &coo, int nrows,
   return out;
 }
 
+CSR spgemm_expand_chunked_rowlocal_avx512(const CSR &A,
+                                          const std::vector<BRowChunked> &B,
+                                          int ncols) {
+  int padded_cols = ((ncols + W - 1) / W) * W;
+
+  CSR C;
+  C.nrows = A.nrows;
+  C.ncols = ncols;
+  C.row_ptr.resize(A.nrows + 1);
+
+#pragma omp parallel
+  {
+    // thread-local dense buffer
+    std::vector<val_t> dense_row(padded_cols, 0.0);
+
+    // thread-local output
+    std::vector<int> local_cols;
+    std::vector<val_t> local_vals;
+
+#pragma omp for schedule(static)
+    for (int i = 0; i < A.nrows; ++i) {
+      std::fill(dense_row.begin(), dense_row.end(), 0.0);
+
+      // compute row i
+      for (int p = A.row_ptr[i]; p < A.row_ptr[i + 1]; ++p) {
+        int k = A.col_idx[p];
+        val_t aval = A.vals[p];
+
+        const auto &brow = B[k];
+        __m512d a = _mm512_set1_pd(aval);
+
+        for (const auto &ch : brow.chunks) {
+          __m512d packed = _mm512_loadu_pd(brow.vals.data() + ch.vpos);
+          __m512d b = _mm512_maskz_expand_pd(ch.mask, packed);
+          __m512d c = _mm512_loadu_pd(dense_row.data() + ch.j);
+          c = _mm512_fmadd_pd(a, b, c);
+          _mm512_storeu_pd(dense_row.data() + ch.j, c);
+        }
+      }
+
+      // compress row i
+      int nnz = 0;
+      for (int j = 0; j < ncols; ++j) {
+        val_t v = dense_row[j];
+        if (v != 0.0) {
+          local_cols.push_back(j);
+          local_vals.push_back(v);
+          nnz++;
+        }
+      }
+
+      C.row_ptr[i + 1] = nnz;
+    }
+
+#pragma omp critical
+    {
+      int base = C.col_idx.size();
+      C.col_idx.insert(C.col_idx.end(), local_cols.begin(), local_cols.end());
+      C.vals.insert(C.vals.end(), local_vals.begin(), local_vals.end());
+    }
+  }
+
+  for (int i = 0; i < C.nrows; ++i)
+    C.row_ptr[i + 1] += C.row_ptr[i];
+
+  return C;
+}
+
 // ------------------------
 // PAD preparation
 // ------------------------
@@ -487,9 +588,11 @@ int main(int argc, char **argv) {
   auto Bcoo = Acoo;
   Br = Ar;
   Bc = Ac;
+
   assert(Ac == Br);
 
   CSC A = coo_to_csc(Ar, Ac, Acoo);
+  CSR Acsr = coo_to_csr(Ar, Ar, Acoo);
   auto Brows = build_B_rows(Br, Bcoo);
 
   std::vector<val_t> C;
@@ -540,6 +643,14 @@ int main(int argc, char **argv) {
 
     /*std::cout << Ar << "," << Ar << "," << (C_mem + A_mem + B_mem) << ","*/
     /*          << file_name;*/
+  } else if (mode == "csr") {
+    auto t0 = now_ms();
+    auto Brows = build_B_rows_chunked_from_coo(Bcoo, Br, Bc);
+    CSR Ccsr = spgemm_expand_chunked_rowlocal_avx512(Acsr, Brows, Bc);
+    auto t1 = now_ms();
+    std::cout << Ar << "," << Ar << "," << (t1 - t0) << "," << file_name << ","
+              << file_name;
+
   } else {
     std::cerr << "unknown mode: " << mode << '\n';
     return 1;
