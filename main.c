@@ -1,6 +1,7 @@
-//#include "taco_kernel.h"
+// #include "taco_kernel.h"
 //#include "taco_kernel_opt.h"
-#include "taco_kernel_dense.h"
+// #include "taco_kernel_dense.h"
+#include "taco_kernel_csr_dense.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -248,17 +249,17 @@ int main_dense_compare(int argc, char **argv) {
   compute(A, B, C);
   double t1 = now_ms();
 
-  //save output
+  // save output
   char *outname = make_result_filename(Bfile);
-  //save_dense_tns(outname, (double *)A->vals, N);
+  // save_dense_tns(outname, (double *)A->vals, N);
 
   size_t mem_dense = 3 * dense_mem_bytes(N); // A,B,C
 
-  //memory result
+  // memory result
   printf("%d,%d,%zu,%s", N, N, mem_dense, Bfile);
- 
-  //runtime result
-  //printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
+
+  // runtime result
+  // printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
 
   free(outname);
   free(A->vals);
@@ -339,12 +340,12 @@ int main_load(int argc, char **argv) {
   char *outname = make_result_filename(Bfile);
   // save_tns(A, outname);
   // runtime
-  //printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
+  // printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
 
   // memory
-  size_t B_mem = taco_csr_memory(B, Bmax_i+1, Bnnz);
-  size_t C_mem = taco_csr_memory(C, Cmax_i+1, Cnnz);
-  size_t Annz = ((int*)A->indices[1][0])[N];   // last entry of rowptr
+  size_t B_mem = taco_csr_memory(B, Bmax_i + 1, Bnnz);
+  size_t C_mem = taco_csr_memory(C, Cmax_i + 1, Cnnz);
+  size_t Annz = ((int *)A->indices[1][0])[N]; // last entry of rowptr
   size_t A_mem = taco_csr_memory(A, N, Annz);
   printf("%d,%d,%zu,%s", N, N, (A_mem + B_mem + C_mem), Bfile);
 
@@ -355,8 +356,97 @@ int main_load(int argc, char **argv) {
   return 0;
 }
 
-int main(int argc, char **argv) {
-  main_dense_compare(argc, argv);
-  //main_load(argc, argv);
+int main_dense_sparse(int argc, char **argv) {
+  if (argc < 3) {
+    printf("Usage: ./spgemm_taco B.tns C.tns\n");
+    return 1;
+  }
+
+  const char *Bfile = argv[1];
+  const char *Cfile = argv[2];
+
+  int *Brow, *Bcol, Bnnz;
+  double *Bval;
+  int Bmax_i, Bmax_j;
+
+  int *Crow, *Ccol, Cnnz;
+  double *Cval;
+  int Cmax_i, Cmax_j;
+
+  // Load the two matrices
+  // printf("Loading %s...\n", Bfile);
+  load_tns(Bfile, &Brow, &Bcol, &Bval, &Bnnz, &Bmax_i, &Bmax_j);
+
+  // printf("Loading %s...\n", Cfile);
+  load_tns(Cfile, &Crow, &Ccol, &Cval, &Cnnz, &Cmax_i, &Cmax_j);
+
+  // Determine N from largest index
+  int N = Bmax_i;
+  if (Cmax_i > N)
+    N = Cmax_i;
+  if (Bmax_j > N)
+    N = Bmax_j;
+  if (Cmax_j > N)
+    N = Cmax_j;
+
+  // printf("Matrix size inferred: %dx%d\n", N, N);
+  // printf("B nnz = %d\n", Bnnz);
+  // printf("C nnz = %d\n", Cnnz);
+
+  int dims[2] = {N, N};
+  int order[2] = {0, 1};
+  taco_mode_t modes[2] = {taco_mode_sparse, taco_mode_sparse};
+  taco_mode_t dense_modes[2] = {taco_mode_dense, taco_mode_dense};
+
+  taco_tensor_t *B = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
+  taco_tensor_t *C = init_taco_tensor_t(2, sizeof(double), dims, order, modes);
+  taco_tensor_t *A = init_taco_tensor_t(2, sizeof(double), dims, order, dense_modes);
+
+  B->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
+  B->indices[1][1] = (uint8_t *)malloc(sizeof(int));
+  B->vals = (uint8_t *)malloc(sizeof(double));
+
+  C->indices[1][0] = (uint8_t *)malloc(sizeof(int) * (N + 1));
+  C->indices[1][1] = (uint8_t *)malloc(sizeof(int));
+  C->vals = (uint8_t *)malloc(sizeof(double));
+
+  A->vals = (uint8_t *)calloc((size_t)N * N, sizeof(double));
+
+  // COO1_pos arrays
+  int Bpos_arr[2] = {0, Bnnz};
+  int Cpos_arr[2] = {0, Cnnz};
+
+  pack_into_taco(B, Brow, Bcol, Bval, Bnnz, 1);
+  pack_into_taco(C, Crow, Ccol, Cval, Cnnz, 0);
+
+  double t0 = now_ms();
+  assemble(A, B, C);
+  compute(A, B, C);
+  double t1 = now_ms();
+
+  char *outname = make_result_filename(Bfile);
+  // save_tns(A, outname);
+  // runtime
+  printf("%d,%d,%.6f,%s", N, N, (t1 - t0), Bfile);
+
+  // memory
+ // size_t B_mem = taco_csr_memory(B, Bmax_i + 1, Bnnz);
+ // size_t C_mem = taco_csr_memory(C, Cmax_i + 1, Cnnz);
+ // size_t Annz = ((int *)A->indices[1][0])[N]; // last entry of rowptr
+ // size_t A_mem = taco_csr_memory(A, N, Annz);
+ // printf("%d,%d,%zu,%s", N, N, (A_mem + B_mem + C_mem), Bfile);
+
+  free(outname);
+  free(A->vals);
+  free(B->vals);
+  free(C->vals);
   return 0;
 }
+
+int main(int argc, char **argv) {
+  // main_dense_compare(argc, argv);
+  main_dense_sparse(argc, argv);
+  //  main_load(argc, argv);
+  return 0;
+}
+
