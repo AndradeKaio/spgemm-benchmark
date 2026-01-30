@@ -19,6 +19,7 @@
 #include <iostream>
 #include <omp.h>
 #include <sstream>
+#include <stdint.h>
 #include <string>
 #include <time.h>
 #include <vector>
