@@ -477,6 +477,8 @@ spgemm_expand_once_avx512(const CSC &A, const std::vector<BRowCompressed> &B,
 std::vector<val_t>
 spgemm_expand_chunked_avx512(const CSC &A, const std::vector<BRowChunked> &B,
                              int ncols) {
+  // users a dense accumulator per thread.
+  // compresses data back to a COO strcture.
   int padded_cols = ((ncols + W - 1) / W) * W;
   std::vector<val_t> C(A.nrows * padded_cols, 0.0);
 
@@ -726,6 +728,20 @@ int main(int argc, char **argv) {
     std::cout << Ar << "," << Ar << "," << (t1 - t0) << "," << file_name << ","
               << file_name;
 
+  } else if (mode == "active_chunks_ptacc") {
+    auto t0 = now_ms();
+    auto Brows = build_B_rows_chunked_from_coo(Bcoo, Br, Bc);
+    auto Coo = spgemm_expand_chunked_extract_compress(A, Brows, Bc);
+    auto t1 = now_ms();
+    std::cout << Ar << "," << Ar << "," << (t1 - t0) << "," << file_name << ","
+              << file_name;
+    // memory data
+    /*size_t C_mem = dense_mem_bytes(Ar);*/
+    /*size_t A_mem = get_csc_mem_bytes(A);*/
+    /*size_t B_mem = get_masked_mem_bytes(Bmask);*/
+
+    /*std::cout << Ar << "," << Ar << "," << (C_mem + A_mem + B_mem) << ","*/
+    /*          << file_name;*/
   } else {
     std::cerr << "unknown mode: " << mode << '\n';
     return 1;
