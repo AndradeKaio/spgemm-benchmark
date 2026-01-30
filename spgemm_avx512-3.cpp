@@ -478,8 +478,6 @@ spgemm_expand_once_avx512(const CSC &A, const std::vector<BRowCompressed> &B,
 std::vector<val_t>
 spgemm_expand_chunked_avx512(const CSC &A, const std::vector<BRowChunked> &B,
                              int ncols) {
-  // users a dense accumulator per thread.
-  // compresses data back to a COO strcture.
   int padded_cols = ((ncols + W - 1) / W) * W;
   std::vector<val_t> C(A.nrows * padded_cols, 0.0);
 
@@ -560,8 +558,79 @@ std::vector<val_t> spgemm_expand_mask_avx512(const CSC &A,
   return C;
 }
 
+std::vector<COO> spgemm_expand_chunked_extract_compress2(
+    const CSC &A, const std::vector<BRowChunked> &B, int ncols) {
+  // users a dense accumulator per thread.
+  // compresses data back to a COO strcture.
+  constexpr int W = 8;
+  int padded_cols = ((ncols + W - 1) / W) * W;
+
+  std::vector<COO> out;
+
+#pragma omp parallel
+  {
+    std::vector<COO> local;
+    std::vector<val_t> acc(padded_cols, 0.0);
+    std::vector<uint8_t> acc_mask(padded_cols / W, 0);
+
+    int tid = omp_get_thread_num();
+    int nt = omp_get_num_threads();
+    int rows_per = (A.nrows + nt - 1) / nt;
+    int i0 = tid * rows_per;
+    int i1 = std::min(A.nrows, i0 + rows_per);
+
+    for (int i = i0; i < i1; ++i) {
+      std::fill(acc.begin(), acc.end(), 0.0);
+      std::fill(acc_mask.begin(), acc_mask.end(), 0);
+
+      for (int k = 0; k < A.ncols; ++k) {
+        for (int p = A.col_ptr[k]; p < A.col_ptr[k + 1]; ++p) {
+          if (A.row_idx[p] != i)
+            continue;
+
+          __m512d a = _mm512_set1_pd(A.vals[p]);
+          const auto &brow = B[k];
+
+          for (const auto &ch : brow.chunks) {
+            __m512d packed = _mm512_loadu_pd(brow.vals.data() + ch.vpos);
+            __m512d b = _mm512_maskz_expand_pd(ch.mask, packed);
+
+            __m512d c = _mm512_loadu_pd(acc.data() + ch.j);
+            c = _mm512_fmadd_pd(a, b, c);
+            _mm512_storeu_pd(acc.data() + ch.j, c);
+
+            acc_mask[ch.j / W] = 1;
+          }
+        }
+      }
+
+      // === Vectorized extraction ===
+      for (int cj = 0; cj < padded_cols; cj += W) {
+        if (!acc_mask[cj / W])
+          continue;
+
+        __m512d v = _mm512_loadu_pd(acc.data() + cj);
+        __mmask8 nz = _mm512_cmp_pd_mask(v, _mm512_setzero_pd(), _CMP_NEQ_OQ);
+
+        while (nz) {
+          int lane = _tzcnt_u32(nz);
+          nz &= nz - 1;
+          val_t val = acc[cj + lane];
+          local.push_back({i, cj + lane, val});
+        }
+      }
+    }
+
+#pragma omp critical
+    out.insert(out.end(), local.begin(), local.end());
+  }
+
+  return out;
+}
 std::vector<COO> spgemm_expand_chunked_extract_compress(
     const CSC &A, const std::vector<BRowChunked> &B, int ncols) {
+  // users a dense accumulator per thread.
+  // compresses data back to a COO strcture.
   constexpr int W = 8;
   int padded_cols = ((ncols + W - 1) / W) * W;
 
